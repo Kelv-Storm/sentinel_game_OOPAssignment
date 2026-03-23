@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading;
 
@@ -134,31 +134,50 @@ namespace Sentinel
             Country target = SelectTargetCountry();
             if (target == null) return;
 
-            int ecoCost = 15;
-            int milCost = 5;
             Country myCountry = mainPlayer.GetCountry();
 
+
+
+            // 1. ALLY BETRAYAL CONFIRMATION
+            if (myCountry.HasAlly(target.GetName()))
+            {
+                Console.Clear();
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("!!! WARNING: BETRAYAL IMMINENT !!!");
+                Console.WriteLine($"{target.GetName()} is your ALLY.");
+                Console.Write("Are you sure you want to break the alliance and attack? (Y/N): ");
+
+                string confirm = Console.ReadLine().ToUpper();
+                if (confirm != "Y")
+                {
+                    LogEvent($"ATTACK ON {target.GetName()} ABORTED.");
+                    return;
+                }
+
+                // If they said 'Y', break the alliance
+                LogEvent($"BETRAYAL! ALLIANCE BROKEN WITH {target.GetName()}!");
+                myCountry.RemoveAlly(target.GetName());
+            }
+
+            // 2. RESOURCE CHECK
+            int ecoCost = 15;
+            int milCost = 5;
             if (myCountry.GetStats().GetEconomy() < ecoCost || myCountry.GetStats().GetMilitary() < milCost)
             {
                 LogEvent("NOT ENOUGH RESOURCES TO ATTACK.");
                 return;
             }
 
+            // 3. PROCEED WITH ATTACK
             myCountry.GetStats().ReduceEconomy(ecoCost);
             myCountry.GetStats().ReduceMilitary(milCost);
-
-            if (myCountry.HasAlly(target.GetName()))
-            {
-                LogEvent($"ALLIANCE BROKEN WITH {target.GetName()}!");
-                myCountry.RemoveAlly(target.GetName());
-            }
 
             Console.Clear();
             DrawInterface();
 
             bool wasAlive = !target.IsDefeated();
-
             AnimateMissile(myCountry, target);
+
             int damage = rng.Next(25, 45);
             target.TakeDamage(damage);
             LogEvent($"ATTACK HIT {target.GetName()} FOR {damage} DAMAGE.");
@@ -461,7 +480,7 @@ namespace Sentinel
             Console.WriteLine("--- SELECT TARGET ---");
             for (int i = 0; i < worldCountries.Count; i++)
             {
-                if (!worldCountries[i].IsDefeated())
+                if (!worldCountries[i].IsDefeated() && worldCountries[i].GetName() != mainPlayer.GetCountry().GetName())
                 {
                     Console.WriteLine($"{i + 1}. {worldCountries[i].GetName()} (Mil: {worldCountries[i].GetStats().GetMilitary()})");
                 }
