@@ -7,13 +7,15 @@ namespace Sentinel
     // ================= MAIN PROGRAM =================
     class Program
     {
-        // Global variables for the game state
+        // [REQUIREMENT: COLLECTIONS]
         static List<Country> worldCountries = new List<Country>();
         static Player mainPlayer;
 
         static bool isGameRunning = true;
         static double gameHour = 0;
-        static int defconLevel = 5;
+
+        static int defconLevel = 3;
+        static GameLevel currentLevel = new Defcon3Level(); // [REQUIREMENT: GAME LEVELS AS OBJECTS]
 
         static string inputCommand = "";
         static DateTime lastTick = DateTime.Now;
@@ -29,7 +31,7 @@ namespace Sentinel
 
             mainPlayer = SelectCountryScreen();
 
-            // Assign exactly 2 allies only to the player's chosen country
+            // Assign exactly 2 allies
             while (mainPlayer.GetCountry().GetAllyCount() < 2)
             {
                 Country randomAlly = worldCountries[rng.Next(worldCountries.Count)];
@@ -51,6 +53,22 @@ namespace Sentinel
                 if ((DateTime.Now - lastTick).TotalMilliseconds > 500)
                 {
                     gameHour += (1.75 / 60.0);
+
+                    // --- LEVEL PROGRESSION LOGIC ---
+                    if (gameHour >= 8.0 && currentLevel is Defcon3Level)
+                    {
+                        currentLevel = new Defcon2Level();
+                        defconLevel = 2;
+                        LogEvent(">>> DEFCON 2 DECLARED: MOBILIZATION FORCES ENGAGED <<<");
+                    }
+                    else if (gameHour >= 16.0 && currentLevel is Defcon2Level)
+                    {
+                        currentLevel = new Defcon1Level();
+                        defconLevel = 1;
+                        LogEvent(">>> DEFCON 1 DECLARED: TOTAL NUCLEAR WARFARE <<<");
+                    }
+                    // -------------------------------
+
                     SimulateAI();
                     Console.Clear();
                     DrawInterface();
@@ -84,13 +102,23 @@ namespace Sentinel
 
             for (int i = 0; i < names.Length; i++)
             {
-                Country newCountry = new Country(names[i]);
+                Country newCountry;
+
+                // [REQUIREMENT: INHERITANCE IN ACTION]
+                if (names[i] == "USA" || names[i] == "Russia" || names[i] == "China")
+                {
+                    newCountry = new Superpower(names[i]);
+                }
+                else
+                {
+                    newCountry = new Country(names[i]);
+                }
+
                 newCountry.SetCoordinates(xCoords[i], yCoords[i]);
                 worldCountries.Add(newCountry);
             }
         }
 
-        // ================= INPUT & COMMANDS =================
         static void ReadPlayerInput()
         {
             if (Console.KeyAvailable)
@@ -124,7 +152,8 @@ namespace Sentinel
             if (cmd.StartsWith("ATTACK")) StartAttack();
             else if (cmd.StartsWith("AID")) StartAid();
             else if (cmd.StartsWith("REQUEST")) RequestHelp();
-            else if (cmd.StartsWith("HELP")) LogEvent("COMMANDS: ATTACK, AID, REQUEST, QUIT");
+            else if (cmd.StartsWith("DRAFT")) StartDraft();
+            else if (cmd.StartsWith("HELP")) LogEvent("COMMANDS: ATTACK, AID, REQUEST, DRAFT, QUIT");
             else if (cmd.StartsWith("QUIT")) isGameRunning = false;
             else if (cmd.Length > 0) LogEvent("UNKNOWN COMMAND.");
         }
@@ -136,9 +165,14 @@ namespace Sentinel
 
             Country myCountry = mainPlayer.GetCountry();
 
+            // Self-Attack Check
+            if (target.GetName() == myCountry.GetName())
+            {
+                LogEvent("CANCELLED: YOU CANNOT ATTACK YOUR OWN NATION.");
+                return;
+            }
 
-
-            // 1. ALLY BETRAYAL CONFIRMATION
+            // Betrayal Confirmation
             if (myCountry.HasAlly(target.GetName()))
             {
                 Console.Clear();
@@ -154,21 +188,19 @@ namespace Sentinel
                     return;
                 }
 
-                // If they said 'Y', break the alliance
                 LogEvent($"BETRAYAL! ALLIANCE BROKEN WITH {target.GetName()}!");
                 myCountry.RemoveAlly(target.GetName());
+                target.RemoveAlly(myCountry.GetName());
             }
 
-            // 2. RESOURCE CHECK
             int ecoCost = 15;
             int milCost = 5;
-            if (myCountry.GetStats().GetEconomy() < ecoCost || myCountry.GetStats().GetMilitary() < milCost)
+            if (myCountry.GetStats().GetEconomyRaw() < ecoCost || myCountry.GetStats().GetMilitaryRaw() < milCost)
             {
                 LogEvent("NOT ENOUGH RESOURCES TO ATTACK.");
                 return;
             }
 
-            // 3. PROCEED WITH ATTACK
             myCountry.GetStats().ReduceEconomy(ecoCost);
             myCountry.GetStats().ReduceMilitary(milCost);
 
@@ -179,8 +211,8 @@ namespace Sentinel
             AnimateMissile(myCountry, target);
 
             int damage = rng.Next(25, 45);
-            target.TakeDamage(damage);
-            LogEvent($"ATTACK HIT {target.GetName()} FOR {damage} DAMAGE.");
+            target.TakeDamage(damage); // [REQUIREMENT: POLYMORPHISM]
+            LogEvent($"ATTACK HIT {target.GetName()} FOR {damage} BASE DAMAGE.");
 
             if (wasAlive && target.IsDefeated())
             {
@@ -198,61 +230,74 @@ namespace Sentinel
         static void StartAid()
         {
             Country myCountry = mainPlayer.GetCountry();
+            List<Country> validAllies = new List<Country>();
 
-            // 1. Compile a list of ONLY our living allies
-            List<Country> aliveAllies = new List<Country>();
             foreach (Country c in worldCountries)
             {
                 if (myCountry.HasAlly(c.GetName()) && !c.IsDefeated())
                 {
-                    aliveAllies.Add(c);
+                    validAllies.Add(c);
                 }
             }
 
-            // If everyone is dead, cancel the command
-            if (aliveAllies.Count == 0)
+            if (validAllies.Count == 0)
             {
-                LogEvent("NO ACTIVE ALLIES TO AID.");
+                LogEvent("YOU HAVE NO ACTIVE ALLIES TO AID.");
                 return;
             }
 
-            // 2. Display the custom ally menu
             Console.Clear();
-            Console.WriteLine("--- SELECT ALLY TO AID ---");
-            for (int i = 0; i < aliveAllies.Count; i++)
+            Console.WriteLine("--- SEND AID TO ALLY ---");
+            for (int i = 0; i < validAllies.Count; i++)
             {
-                Console.WriteLine($"{i + 1}. {aliveAllies[i].GetName()} (Mil: {aliveAllies[i].GetStats().GetMilitary()})");
+                Console.WriteLine($"{i + 1}. {validAllies[i].GetName()} (Mil: {validAllies[i].GetStats().GetMilitary():0.0}%)");
             }
-            Console.Write("\nENTER NUMBER: ");
-            string choice = Console.ReadLine();
+            Console.Write("\nSELECT ALLY NUMBER: ");
 
-            int targetId;
-            if (int.TryParse(choice, out targetId) && targetId > 0 && targetId <= aliveAllies.Count)
+            // [REQUIREMENT: EXCEPTION HANDLING]
+            try
             {
-                Country target = aliveAllies[targetId - 1];
+                int choice = int.Parse(Console.ReadLine());
+                if (choice <= 0 || choice > validAllies.Count) throw new IndexOutOfRangeException();
 
-                // Check if we can afford the aid
-                if (myCountry.GetStats().GetEconomy() >= 15)
+                Country target = validAllies[choice - 1];
+
+                if (myCountry.GetStats().GetEconomyRaw() >= 15)
                 {
                     myCountry.GetStats().ReduceEconomy(15);
                     target.GetStats().AddMilitary(20);
-                    LogEvent($"SENT AID TO {target.GetName()}.");
+                    LogEvent($"SENT MILITARY AID TO {target.GetName()}.");
                 }
                 else
                 {
-                    LogEvent("NOT ENOUGH ECONOMY TO SEND AID.");
+                    LogEvent("INSUFFICIENT ECONOMY TO SEND AID.");
                 }
+            }
+            catch (FormatException)
+            {
+                LogEvent("ERROR: INVALID INPUT. MUST BE A NUMBER.");
+            }
+            catch (IndexOutOfRangeException)
+            {
+                LogEvent("ERROR: ALLY NUMBER OUT OF RANGE.");
             }
         }
 
         static void RequestHelp()
         {
-            Country myCountry = mainPlayer.GetCountry();
+            // CHECK FOR REMAINING REQUESTS
+            if (mainPlayer.GetRequestsRemaining() <= 0)
+            {
+                LogEvent("REQUEST DENIED: YOU HAVE EXHAUSTED ALL ALLY REQUESTS.");
+                return;
+            }
 
+            Country myCountry = mainPlayer.GetCountry();
             List<Country> activeAllies = new List<Country>();
+
             foreach (Country c in worldCountries)
             {
-                if (myCountry.HasAlly(c.GetName()) && !c.IsDefeated() && c.GetStats().GetEconomy() > 40)
+                if (myCountry.HasAlly(c.GetName()) && !c.IsDefeated() && c.GetStats().GetEconomyRaw() > 40)
                 {
                     activeAllies.Add(c);
                 }
@@ -266,44 +311,69 @@ namespace Sentinel
                 myCountry.GetStats().AddMilitary(amt);
                 helper.GetStats().ReduceEconomy(10);
 
-                LogEvent($"{helper.GetName()} SENT {amt} SUPPLIES.");
+                mainPlayer.UseRequest(); // Deduct a request
+
+                LogEvent($"{helper.GetName()} SENT {amt} SUPPLIES. ({mainPlayer.GetRequestsRemaining()} REQUESTS LEFT)");
             }
             else
             {
-                LogEvent("REQUEST DENIED. NO ALLIES CAN HELP.");
+                LogEvent("REQUEST DENIED. NO ALLIES CAN HELP RIGHT NOW.");
             }
         }
 
-        // ================= SIMULATION LOGIC =================
+        static void StartDraft()
+        {
+            Country myCountry = mainPlayer.GetCountry();
+            int popCost = 10;
+            int milGain = 15;
+
+            if (myCountry.GetStats().GetPopulationRaw() >= popCost)
+            {
+                myCountry.GetStats().ReducePopulation(popCost);
+                myCountry.GetStats().AddMilitary(milGain);
+                LogEvent($"DRAFT SUCCESS: Conscripted {popCost} Pop for {milGain} Military!");
+            }
+            else
+            {
+                LogEvent("DRAFT FAILED: Population too low to conscript.");
+            }
+        }
+
         static void SimulateAI()
         {
             List<Country> aliveCountries = new List<Country>();
             foreach (Country c in worldCountries)
             {
-                if (!c.IsDefeated())
-                {
-                    aliveCountries.Add(c);
-                }
+                if (!c.IsDefeated()) aliveCountries.Add(c);
             }
 
-            if (aliveCountries.Count < 2) return;
+            // Let the Level Object handle the attacks
+            currentLevel.RunLevelMechanics(aliveCountries, mainPlayer.GetCountry(), rng);
 
-            if (rng.Next(100) < 10)
+            // ==========================================
+            // GLOBAL RECOVERY MECHANICS (AI & Player)
+            // ==========================================
+            foreach (Country nation in aliveCountries)
             {
-                Country attacker = aliveCountries[rng.Next(aliveCountries.Count)];
-                Country victim = aliveCountries[rng.Next(aliveCountries.Count)];
-                Country myCountry = mainPlayer.GetCountry();
+                Resources stats = nation.GetStats();
 
-                if (attacker.GetName() != victim.GetName() && attacker.GetName() != myCountry.GetName())
+                // 1. Passive Economy Growth
+                if (stats.GetEconomyRaw() < stats.GetMaxEconomy() && rng.Next(100) < 10)
                 {
-                    AnimateMissile(attacker, victim);
-                    victim.TakeDamage(rng.Next(15, 30));
+                    stats.AddEconomy(1);
                 }
-            }
 
-            if (mainPlayer.GetCountry().GetStats().GetEconomy() < 100 && rng.Next(100) < 15)
-            {
-                mainPlayer.GetCountry().GetStats().AddEconomy(1);
+                // 2. Military Rebuilding
+                if (stats.GetEconomyRaw() > 50 && stats.GetMilitaryRaw() < stats.GetMaxMilitary() && rng.Next(100) < 5)
+                {
+                    stats.ReduceEconomy(2);
+                    stats.AddMilitary(1);
+
+                    if (stats.GetMilitaryRaw() == stats.GetMaxMilitary())
+                    {
+                        LogEvent($"[RECOVERY] {nation.GetName()} has fully rebuilt its military forces.");
+                    }
+                }
             }
         }
 
@@ -322,8 +392,8 @@ namespace Sentinel
             }
             else if (eventType == 1)
             {
-                headline = $"Protests in {randomCountry.GetName()} (-10 Stability)";
-                randomCountry.GetStats().ReduceStability(10);
+                headline = $"Mass emigration from {randomCountry.GetName()} (-10 Pop)";
+                randomCountry.GetStats().ReducePopulation(10);
             }
             else if (eventType == 2)
             {
@@ -349,9 +419,9 @@ namespace Sentinel
             Country myCountry = mainPlayer.GetCountry();
             Resources stats = myCountry.GetStats();
 
-            int milScore = stats.GetMilitary() * 10;
-            int ecoScore = stats.GetEconomy() * 10;
-            int popScore = stats.GetPopulation() * 10;
+            int milScore = stats.GetMilitaryRaw() * 10;
+            int ecoScore = stats.GetEconomyRaw() * 10;
+            int popScore = stats.GetPopulationRaw() * 10;
             int conquestScore = mainPlayer.GetConquests() * 500;
 
             int totalScore = milScore + ecoScore + popScore + conquestScore;
@@ -364,7 +434,14 @@ namespace Sentinel
             if (myCountry.IsDefeated())
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("CRITICAL FAILURE: YOUR NATION HAS FALLEN.");
+                if (stats.GetMilitaryRaw() <= 0)
+                {
+                    Console.WriteLine("CRITICAL FAILURE: YOUR MILITARY HAS BEEN WIPED OUT.");
+                }
+                else
+                {
+                    Console.WriteLine("CRITICAL FAILURE: YOUR POPULATION HAS BEEN EXTERMINATED.");
+                }
             }
             else
             {
@@ -375,11 +452,13 @@ namespace Sentinel
 
             Console.ForegroundColor = ConsoleColor.White;
             Console.WriteLine("\n--- FINAL STATISTICS ---");
-            Console.WriteLine($"NATION:              {myCountry.GetName()}");
+            string nationType = (myCountry is Superpower) ? "SUPERPOWER" : "STANDARD NATION";
+            Console.WriteLine($"NATION:              {myCountry.GetName()} ({nationType})");
             Console.WriteLine($"COUNTRIES CONQUERED: {mainPlayer.GetConquests()} (x500 pts)");
-            Console.WriteLine($"FINAL MILITARY:      {stats.GetMilitary()}% (x10 pts)");
-            Console.WriteLine($"FINAL ECONOMY:       {stats.GetEconomy()}% (x10 pts)");
-            Console.WriteLine($"FINAL POPULATION:    {stats.GetPopulation()}% (x10 pts)");
+
+            Console.WriteLine($"FINAL MILITARY:      {stats.GetMilitary():0.0}% (x10 pts)");
+            Console.WriteLine($"FINAL ECONOMY:       {stats.GetEconomy():0.0}% (x10 pts)");
+            Console.WriteLine($"FINAL POPULATION:    {stats.GetPopulation():0.0}% (x10 pts)");
 
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine("\n===============================================================================");
@@ -392,7 +471,6 @@ namespace Sentinel
             while (Console.ReadKey(true).Key != ConsoleKey.Enter) { }
         }
 
-        // ================= UI AND GRAPHICS =================
         static void DrawInterface()
         {
             try
@@ -424,11 +502,13 @@ namespace Sentinel
                 Console.ForegroundColor = ConsoleColor.White;
                 Console.WriteLine("===============================================================================");
                 Console.WriteLine($"TIME: {gameHour:00.00} / 24.00 HOURS   |   DEFCON: {defconLevel}");
-                Console.WriteLine($"MILITARY: {mainPlayer.GetCountry().GetStats().GetMilitary()}%  |  ECONOMY: {mainPlayer.GetCountry().GetStats().GetEconomy()}%");
+                Console.WriteLine($"STAGE: {currentLevel.LevelName}");
+
+                Console.WriteLine($"MILITARY: {mainPlayer.GetCountry().GetStats().GetMilitary():0.0}%  |  ECONOMY: {mainPlayer.GetCountry().GetStats().GetEconomy():0.0}%  |  POP: {mainPlayer.GetCountry().GetStats().GetPopulation():0.0}%");
 
                 string allyString = string.Join(", ", mainPlayer.GetCountry().GetAllies());
                 if (allyString == "") allyString = "NONE";
-                Console.WriteLine($"ALLIES: {allyString}");
+                Console.WriteLine($"ALLIES: {allyString} (Requests Left: {mainPlayer.GetRequestsRemaining()})");
 
                 Console.WriteLine("===============================================================================");
 
@@ -436,7 +516,8 @@ namespace Sentinel
                 Console.WriteLine("COMMANDS MANUAL:");
                 Console.WriteLine(" [ATTACK]  - Launch an offensive strike (Cost: 15 Eco, 5 Mil)");
                 Console.WriteLine(" [AID]     - Send military supplies to allied nations (Cost: 15 Eco)");
-                Console.WriteLine(" [REQUEST] - Ask your allies for military supplies");
+                Console.WriteLine($" [REQUEST] - Ask your allies for supplies (Cost: 1 Request Token)");
+                Console.WriteLine(" [DRAFT]   - Conscript citizens into the military (Cost: 10 Pop, Gain: 15 Mil)");
                 Console.WriteLine(" [QUIT]    - Exit the simulation");
                 Console.ForegroundColor = ConsoleColor.White;
                 Console.WriteLine("-------------------------------------------------------------------------------");
@@ -464,9 +545,9 @@ namespace Sentinel
         {
             try
             {
-                Console.SetCursorPosition(0, 38);
+                Console.SetCursorPosition(0, 40);
                 Console.Write(new string(' ', 95));
-                Console.SetCursorPosition(0, 38);
+                Console.SetCursorPosition(0, 40);
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.Write($"COMMAND > {inputCommand}_");
                 Console.ForegroundColor = ConsoleColor.White;
@@ -476,43 +557,78 @@ namespace Sentinel
 
         static Country SelectTargetCountry()
         {
-            Console.Clear();
-            Console.WriteLine("--- SELECT TARGET ---");
-            for (int i = 0; i < worldCountries.Count; i++)
+            try
             {
-                if (!worldCountries[i].IsDefeated() && worldCountries[i].GetName() != mainPlayer.GetCountry().GetName())
+                Console.Clear();
+                Console.WriteLine("--- SELECT TARGET ---");
+                for (int i = 0; i < worldCountries.Count; i++)
                 {
-                    Console.WriteLine($"{i + 1}. {worldCountries[i].GetName()} (Mil: {worldCountries[i].GetStats().GetMilitary()})");
+                    if (!worldCountries[i].IsDefeated() && worldCountries[i].GetName() != mainPlayer.GetCountry().GetName())
+                    {
+                        string typeMarker = (worldCountries[i] is Superpower) ? "[SUPERPOWER]" : "";
+                        Console.WriteLine($"{i + 1}. {worldCountries[i].GetName()} {typeMarker} (Mil: {worldCountries[i].GetStats().GetMilitary():0.0}%)");
+                    }
                 }
-            }
-            Console.Write("\nENTER NUMBER: ");
-            string choice = Console.ReadLine();
+                Console.Write("\nENTER NUMBER: ");
 
-            int targetId;
-            if (int.TryParse(choice, out targetId) && targetId > 0 && targetId <= worldCountries.Count)
-            {
+                int targetId = int.Parse(Console.ReadLine());
+
+                if (targetId <= 0 || targetId > worldCountries.Count)
+                {
+                    throw new IndexOutOfRangeException();
+                }
+
                 return worldCountries[targetId - 1];
             }
-            return null;
+            catch (FormatException)
+            {
+                LogEvent("ERROR: PLEASE ENTER A VALID NUMBER, NOT TEXT.");
+                return null;
+            }
+            catch (IndexOutOfRangeException)
+            {
+                LogEvent("ERROR: SELECTION OUT OF RANGE.");
+                return null;
+            }
         }
 
         static Player SelectCountryScreen()
         {
-            Console.Clear();
-            Console.WriteLine("=== CHOOSE YOUR NATION ===");
-            for (int i = 0; i < worldCountries.Count; i++)
+            while (true)
             {
-                Console.WriteLine($"{i + 1}. {worldCountries[i].GetName()}");
+                try
+                {
+                    Console.Clear();
+                    Console.WriteLine("=== CHOOSE YOUR NATION ===");
+                    for (int i = 0; i < worldCountries.Count; i++)
+                    {
+                        string typeMarker = (worldCountries[i] is Superpower) ? "[SUPERPOWER]" : "";
+                        Console.WriteLine($"{i + 1}. {worldCountries[i].GetName()} {typeMarker}");
+                    }
+                    Console.Write("\nSELECTION > ");
+
+                    int choice = int.Parse(Console.ReadLine());
+
+                    if (choice < 1 || choice > worldCountries.Count)
+                    {
+                        throw new IndexOutOfRangeException();
+                    }
+
+                    Country pickedCountry = worldCountries[choice - 1];
+                    Player newPlayer = new Player(pickedCountry);
+                    return newPlayer;
+                }
+                catch (FormatException)
+                {
+                    Console.WriteLine("\nINVALID INPUT! Please enter a valid number. Press ENTER to try again.");
+                    Console.ReadLine();
+                }
+                catch (IndexOutOfRangeException)
+                {
+                    Console.WriteLine("\nSELECTION OUT OF RANGE! Press ENTER to try again.");
+                    Console.ReadLine();
+                }
             }
-            Console.Write("\nSELECTION > ");
-
-            int choice = 1;
-            int.TryParse(Console.ReadLine(), out choice);
-            if (choice < 1 || choice > worldCountries.Count) choice = 1;
-
-            Country pickedCountry = worldCountries[choice - 1];
-            Player newPlayer = new Player(pickedCountry);
-            return newPlayer;
         }
 
         static void SetupConsole()
@@ -530,14 +646,14 @@ namespace Sentinel
             {
                 try
                 {
-                    Console.SetWindowSize(100, 40);
-                    Console.SetBufferSize(100, 40);
+                    Console.SetWindowSize(100, 43);
+                    Console.SetBufferSize(100, 43);
                 }
                 catch { }
             }
         }
 
-        static void LogEvent(string message)
+        public static void LogEvent(string message)
         {
             eventLog.Add(message);
         }
@@ -572,26 +688,41 @@ namespace Sentinel
 
     // ================= FULLY ENCAPSULATED CLASSES =================
 
-    // Class 1: Resources
+    interface IAttackable
+    {
+        void TakeDamage(int damageAmount);
+        bool IsDefeated();
+    }
+
     class Resources
     {
         private int military;
+        private int maxMilitary;
         private int economy;
+        private int maxEconomy;
         private int population;
-        private int stability;
+        private int maxPopulation;
 
-        public Resources()
+        public Resources(int milCap = 100, int ecoCap = 100, int popCap = 100)
         {
-            military = 100;
-            economy = 100;
-            population = 100;
-            stability = 100;
+            maxMilitary = milCap;
+            military = milCap;
+            maxEconomy = ecoCap;
+            economy = ecoCap;
+            maxPopulation = popCap;
+            population = popCap;
         }
 
-        public int GetMilitary() { return military; }
-        public int GetEconomy() { return economy; }
-        public int GetPopulation() { return population; }
-        public int GetStability() { return stability; }
+        public double GetMilitary() { return ((double)military / maxMilitary) * 100.0; }
+        public double GetEconomy() { return ((double)economy / maxEconomy) * 100.0; }
+        public double GetPopulation() { return ((double)population / maxPopulation) * 100.0; }
+
+        public int GetMilitaryRaw() { return military; }
+        public int GetEconomyRaw() { return economy; }
+        public int GetPopulationRaw() { return population; }
+        public int GetMaxMilitary() { return maxMilitary; }
+        public int GetMaxEconomy() { return maxEconomy; }
+        public int GetMaxPopulation() { return maxPopulation; }
 
         public void ReduceMilitary(int amount)
         {
@@ -602,7 +733,7 @@ namespace Sentinel
         public void AddMilitary(int amount)
         {
             military += amount;
-            if (military > 100) military = 100;
+            if (military > maxMilitary) military = maxMilitary;
         }
 
         public void ReduceEconomy(int amount)
@@ -614,7 +745,7 @@ namespace Sentinel
         public void AddEconomy(int amount)
         {
             economy += amount;
-            if (economy > 100) economy = 100;
+            if (economy > maxEconomy) economy = maxEconomy;
         }
 
         public void ReducePopulation(int amount)
@@ -622,16 +753,9 @@ namespace Sentinel
             population -= amount;
             if (population < 0) population = 0;
         }
-
-        public void ReduceStability(int amount)
-        {
-            stability -= amount;
-            if (stability < 0) stability = 0;
-        }
     }
 
-    // Class 2: Country
-    class Country
+    class Country : IAttackable
     {
         private string name;
         private Resources stats;
@@ -639,10 +763,11 @@ namespace Sentinel
         private int mapX;
         private int mapY;
 
-        public Country(string countryName)
+        // Default capacities passed to Resources
+        public Country(string countryName, int milCapacity = 100, int ecoCapacity = 100, int popCapacity = 100)
         {
             name = countryName;
-            stats = new Resources();
+            stats = new Resources(milCapacity, ecoCapacity, popCapacity);
             allies = new List<string>();
         }
 
@@ -676,14 +801,14 @@ namespace Sentinel
 
         public bool IsDefeated()
         {
-            if (stats.GetMilitary() <= 0)
+            if (stats.GetMilitaryRaw() <= 0 || stats.GetPopulationRaw() <= 0)
             {
                 return true;
             }
             return false;
         }
 
-        public void TakeDamage(int damageAmount)
+        public virtual void TakeDamage(int damageAmount)
         {
             stats.ReduceMilitary(damageAmount);
             stats.ReduceEconomy(damageAmount / 2);
@@ -691,16 +816,32 @@ namespace Sentinel
         }
     }
 
-    // Class 3: Player
+    class Superpower : Country
+    {
+        // Constructor Chaining: Upgrading capacities to 150 Mil, 150 Eco, and 200 Pop!
+        public Superpower(string countryName) : base(countryName, 150, 150, 200)
+        {
+        }
+
+        public override void TakeDamage(int damageAmount)
+        {
+            int reducedDamage = (int)(damageAmount * 0.75);
+            Program.LogEvent($"{this.GetName()}'S MISSILE DEFENSE BLOCKED 25% OF DAMAGE!");
+            base.TakeDamage(reducedDamage);
+        }
+    }
+
     class Player
     {
         private Country controlledCountry;
         private int countriesConquered;
+        private int requestsRemaining;
 
         public Player(Country selectedCountry)
         {
             controlledCountry = selectedCountry;
             countriesConquered = 0;
+            requestsRemaining = 3;
         }
 
         public Country GetCountry()
@@ -716,6 +857,105 @@ namespace Sentinel
         public int GetConquests()
         {
             return countriesConquered;
+        }
+
+        public int GetRequestsRemaining()
+        {
+            return requestsRemaining;
+        }
+
+        public void UseRequest()
+        {
+            requestsRemaining--;
+        }
+    }
+
+    // ================= GAME LEVELS =================
+
+    abstract class GameLevel
+    {
+        public string LevelName { get; protected set; }
+        public abstract void RunLevelMechanics(List<Country> aliveCountries, Country playerCountry, Random rng);
+    }
+
+    class Defcon3Level : GameLevel
+    {
+        public Defcon3Level() { LevelName = "STAGE 1: RISING TENSIONS"; }
+
+        public override void RunLevelMechanics(List<Country> aliveCountries, Country playerCountry, Random rng)
+        {
+            if (aliveCountries.Count < 2) return;
+
+            if (rng.Next(100) < 10)
+            {
+                Country attacker = aliveCountries[rng.Next(aliveCountries.Count)];
+                Country victim = aliveCountries[rng.Next(aliveCountries.Count)];
+
+                if (attacker.GetName() != victim.GetName() &&
+                    attacker.GetName() != playerCountry.GetName())
+                {
+                    victim.TakeDamage(rng.Next(10, 25));
+                    Program.LogEvent($"[SKIRMISH] {attacker.GetName()} fired on {victim.GetName()}!");
+                }
+            }
+        }
+    }
+
+    class Defcon2Level : GameLevel
+    {
+        public Defcon2Level() { LevelName = "STAGE 2: BRINK OF WAR"; }
+
+        public override void RunLevelMechanics(List<Country> aliveCountries, Country playerCountry, Random rng)
+        {
+            if (aliveCountries.Count < 2) return;
+
+            if (rng.Next(100) < 20)
+            {
+                Country attacker = aliveCountries[rng.Next(aliveCountries.Count)];
+                Country victim = aliveCountries[rng.Next(aliveCountries.Count)];
+
+                if (attacker.GetName() != victim.GetName() &&
+                    attacker.GetName() != playerCountry.GetName())
+                {
+                    victim.TakeDamage(rng.Next(20, 35));
+                    Program.LogEvent($"[HEAVY STRIKE] {attacker.GetName()} bombed {victim.GetName()}!");
+                }
+            }
+
+            if (rng.Next(100) < 5)
+            {
+                Program.LogEvent("GLOBAL PANIC: Citizens are fleeing! (-2 Pop)");
+                foreach (Country c in aliveCountries) c.GetStats().ReducePopulation(2);
+            }
+        }
+    }
+
+    class Defcon1Level : GameLevel
+    {
+        public Defcon1Level() { LevelName = "STAGE 3: TOTAL WARFARE"; }
+
+        public override void RunLevelMechanics(List<Country> aliveCountries, Country playerCountry, Random rng)
+        {
+            if (aliveCountries.Count < 2) return;
+
+            if (rng.Next(100) < 35)
+            {
+                Country attacker = aliveCountries[rng.Next(aliveCountries.Count)];
+                Country victim = aliveCountries[rng.Next(aliveCountries.Count)];
+
+                if (attacker.GetName() != victim.GetName() &&
+                    attacker.GetName() != playerCountry.GetName())
+                {
+                    victim.TakeDamage(rng.Next(30, 50));
+                    Program.LogEvent($"[NUCLEAR LAUNCH] {attacker.GetName()} decimated {victim.GetName()}!");
+                }
+            }
+
+            if (rng.Next(100) < 10)
+            {
+                Program.LogEvent("MARKET COLLAPSE: Global war destroys supply chains! (-5 Eco)");
+                foreach (Country c in aliveCountries) c.GetStats().ReduceEconomy(5);
+            }
         }
     }
 }
