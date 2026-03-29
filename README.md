@@ -1,4 +1,9 @@
 # sentinel_game_OOPAssignment2
+
+*Notice: In order to play the game, Dr must unzip the zipped file and launch the sentinel 20-3.sln file in Microsoft Visual Studio and click on Program.cs to run the game
+
+
+
 a. Project Title: Sentinel
 b. Group Members:
   i) Kelvin Nathans A/L Loganathan (24005339)
