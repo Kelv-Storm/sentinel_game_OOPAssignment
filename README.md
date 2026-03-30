@@ -11,7 +11,7 @@ b. Group Members:
   iii) Alif Aiman bin Mohd Sokri (24006389)
   iv) Saqib Muhammad (24009307)
   v) Dzikra Ahmad Nurfadillah (25013332)
-  
+  vi) Iman Izz Danni Bin Mohd Zahasni (25014137)
 c. Project Description: A private repository containing the source file of our OOP group's game project, Sentinel, which a strategy-based warfare simulation that can run in cmd.
 
 d. System Features:
